@@ -1,0 +1,122 @@
+name: 'Track Releases to Google Sheets'
+
+on:
+  push:
+    tags:
+      - 'rc_*'
+
+permissions:
+  contents: read
+
+jobs:
+  track_release:
+    name: Track Release in Google Sheets
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract release information
+        id: release_info
+        run: |
+          # Extract tag name from refs
+          tag_name="${GITHUB_REF#refs/tags/}"
+          echo "release_tag=$tag_name" >> "$GITHUB_OUTPUT"
+          
+          # Get current date in ISO format
+          current_date=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          echo "date=$current_date" >> "$GITHUB_OUTPUT"
+          
+          # Repository information
+          repo_name="${{ github.repository }}"
+          echo "repo=$repo_name" >> "$GITHUB_OUTPUT"
+          
+          echo "Release Tag: $tag_name"
+          echo "Date: $current_date"
+          echo "Repository: $repo_name"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          npm init -y
+          npm install googleapis@128
+
+      - name: Create Google Sheets script
+        run: |
+          cat > update_sheet.js << 'EOF'
+          const { google } = require('googleapis');
+          const { JWT } = require('google-auth-library');
+
+          async function updateSheet() {
+            try {
+              // Parse service account credentials from environment
+              const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+              
+              // Create JWT client
+              const client = new JWT({
+                email: credentials.client_email,
+                key: credentials.private_key,
+                scopes: ['https://www.googleapis.com/auth/spreadsheets']
+              });
+
+              // Authenticate
+              await client.authorize();
+
+              // Create sheets API instance
+              const sheets = google.sheets({ version: 'v4', auth: client });
+
+              // Prepare data to append
+              const values = [
+                [
+                  process.env.RELEASE_DATE,
+                  process.env.REPO_NAME,
+                  process.env.RELEASE_TAG
+                ]
+              ];
+
+              // Append data to sheet
+              const request = {
+                spreadsheetId: process.env.CODE_DEPLOYMENT_TRACKING_GOOGLE_SHEET_ID,
+                range: process.env.GOOGLE_SHEET_RANGE || 'Sheet1!A:C',
+                valueInputOption: 'RAW',
+                insertDataOption: 'INSERT_ROWS',
+                resource: {
+                  values: values
+                }
+              };
+
+              const response = await sheets.spreadsheets.values.append(request);
+              console.log('Successfully added row to Google Sheets');
+              console.log('Updated range:', response.data.updates.updatedRange);
+              
+            } catch (error) {
+              console.error('Error updating Google Sheets:', error.message);
+              process.exit(1);
+            }
+          }
+
+          updateSheet();
+          EOF
+
+      - name: Update Google Sheets
+        env:
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          CODE_DEPLOYMENT_TRACKING_GOOGLE_SHEET_ID: ${{ secrets.CODE_DEPLOYMENT_TRACKING_GOOGLE_SHEET_ID }}
+          GOOGLE_SHEET_RANGE: ${{ vars.GOOGLE_SHEET_RANGE }}
+          RELEASE_DATE: ${{ steps.release_info.outputs.date }}
+          REPO_NAME: ${{ steps.release_info.outputs.repo }}
+          RELEASE_TAG: ${{ steps.release_info.outputs.release_tag }}
+        run: |
+          node update_sheet.js
+
+      - name: Notify completion
+        run: |
+          echo "✅ Successfully tracked release ${{ steps.release_info.outputs.release_tag }} in Google Sheets"
+          echo "📊 Sheet ID: ${{ secrets.CODE_DEPLOYMENT_TRACKING_GOOGLE_SHEET_ID }}"
+          echo "📅 Date: ${{ steps.release_info.outputs.date }}"
+          echo "📦 Repository: ${{ steps.release_info.outputs.repo }}"
