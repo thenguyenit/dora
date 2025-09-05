@@ -25,7 +25,7 @@ jobs:
           echo "release_tag=$tag_name" >> "$GITHUB_OUTPUT"
           
           # Get current date in ISO format
-          current_date=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          current_date=$(date -u +"%Y-%m-%d %H:%M:%S")
           echo "date=$current_date" >> "$GITHUB_OUTPUT"
           
           # Repository information
